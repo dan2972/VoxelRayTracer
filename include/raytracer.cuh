@@ -22,6 +22,10 @@ public:
 
     void render();
 
+    void registerScreenQuadTexture(unsigned int textureID) {
+        
+    }
+
 private:
 };
 

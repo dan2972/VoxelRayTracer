@@ -6,7 +6,8 @@
 #include <iostream>
 #include <chrono>
 #include "shader.h"
-#include <resource_manager.h>
+#include "resource_manager.h"
+#include "model.h"
 
 __global__ void generateRandomPixels(uchar4* pixels, int width, int height, unsigned int seed) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -34,22 +35,6 @@ void checkCuda(cudaError_t err, const char* msg) {
         std::cerr << "CUDA Error: " << msg << " (" << cudaGetErrorString(err) << ")" << std::endl;
         exit(EXIT_FAILURE);
     }
-}
-
-unsigned int compileShader(GLenum type, const char* source) {
-    unsigned int shader = glCreateShader(type);
-    glShaderSource(shader, 1, &source, nullptr);
-    glCompileShader(shader);
-
-    // Check for errors
-    int success;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        char infoLog[512];
-        glGetShaderInfoLog(shader, 512, nullptr, infoLog);
-        std::cerr << "Shader Compilation Error: " << infoLog << std::endl;
-    }
-    return shader;
 }
 
 int main() {
@@ -82,7 +67,7 @@ int main() {
     }
 
     // OpenGL Quad Data
-    float quadVertices[] = {
+    std::vector<float> quadVertices = {
         // positions    // texCoords
         -1.0f, -1.0f,  0.0f, 0.0f,
          1.0f, -1.0f,  1.0f, 0.0f,
@@ -90,32 +75,13 @@ int main() {
         -1.0f,  1.0f,  0.0f, 1.0f
     };
 
-    unsigned int quadIndices[] = {
+    std::vector<unsigned int> quadIndices = {
         0, 1, 2,
         0, 2, 3
     };
 
-    // Create VAO, VBO, and EBO
-    unsigned int VAO, VBO, EBO;
-    glGenVertexArrays(1, &VAO);
-    glGenBuffers(1, &VBO);
-    glGenBuffers(1, &EBO);
-
-    glBindVertexArray(VAO);
-
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(quadIndices), quadIndices, GL_STATIC_DRAW);
-
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
-    glEnableVertexAttribArray(1);
-
-    glBindVertexArray(0);
+    Model screenQuad;
+    screenQuad.addData({quadVertices, quadIndices}, {2, 2});
 
     // Compile Shaders and Link Program
     Shader screen_quad_shader = ResourceManager::loadShader("res/shaders/basic_quad.vert", "res/shaders/basic_quad.frag", nullptr, "screen_quad");
@@ -155,7 +121,7 @@ int main() {
         // Render
         glClear(GL_COLOR_BUFFER_BIT);
         screen_quad_shader.use();
-        glBindVertexArray(VAO);
+        screenQuad.bind();
         screenQuadTexture.bind();
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 
@@ -176,10 +142,6 @@ int main() {
     // Cleanup
     cudaGraphicsUnregisterResource(cudaResource);
     checkCuda(cudaFree(devPixels), "Freeing device memory");
-    
-    glDeleteBuffers(1, &VBO);
-    glDeleteBuffers(1, &EBO);
-    glDeleteVertexArrays(1, &VAO);
 
     glfwDestroyWindow(window);
     glfwTerminate();
