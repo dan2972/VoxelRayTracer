@@ -8,38 +8,24 @@
 #include "shader.h"
 #include "resource_manager.h"
 #include "model.h"
+#include "camera.cuh"
+#include "raytracer.cuh"
+#include "bbox.cuh"
+#include "world.cuh"
 
-__global__ void generateRandomPixels(uchar4* pixels, int width, int height, unsigned int seed) {
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
-
-    if (x < width && y < height) {
-        int idx = y * width + x;
-
-        // Initialize curand state
-        curandState state;
-        curand_init(seed, idx, 0, &state);
-
-        // Generate random colors
-        unsigned char r = curand(&state) % 256;
-        unsigned char g = curand(&state) % 256;
-        unsigned char b = curand(&state) % 256;
-
-        pixels[idx] = make_uchar4(r, g, b, 255); // RGBA format
-    }
-}
-
-// Check for CUDA Errors
-void checkCuda(cudaError_t err, const char* msg) {
-    if (err != cudaSuccess) {
-        std::cerr << "CUDA Error: " << msg << " (" << cudaGetErrorString(err) << ")" << std::endl;
-        exit(EXIT_FAILURE);
+void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
+        // glfwSetWindowShouldClose(window, GLFW_TRUE);
+        if (glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_NORMAL)
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        else
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
     }
 }
 
 int main() {
-    const int width = 1280;
-    const int height = 720;
+    const int width = 1920;
+    const int height = 1080;
 
     // Initialize GLFW
     if (!glfwInit()) {
@@ -59,6 +45,10 @@ int main() {
     }
 
     glfwMakeContextCurrent(window);
+
+    glfwSetKeyCallback(window, keyCallback);
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    // glfwSwapInterval(0); // Disable VSync
 
     // Initialize Glad
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
@@ -92,38 +82,90 @@ int main() {
 
     // Register OpenGL Texture with CUDA
     cudaGraphicsResource* cudaResource;
-    checkCuda(cudaGraphicsGLRegisterImage(&cudaResource, screenQuadTexture.ID, GL_TEXTURE_2D, cudaGraphicsRegisterFlagsWriteDiscard), "Registering OpenGL texture with CUDA");
+    checkCudaErrors(cudaGraphicsGLRegisterImage(&cudaResource, screenQuadTexture.ID, GL_TEXTURE_2D, cudaGraphicsRegisterFlagsWriteDiscard));
 
     // Allocate CUDA memory once
     uchar4* devPixels;
-    checkCuda(cudaMalloc(&devPixels, width * height * sizeof(uchar4)), "Allocating device memory");
+    checkCudaErrors(cudaMalloc(&devPixels, width * height * sizeof(uchar4)));
 
     // FPS Counter Variables
     auto lastTime = std::chrono::high_resolution_clock::now();
     int frames = 0;
+    
+    Camera** camera;
+    checkCudaErrors(cudaMalloc((void **)&camera, sizeof(Camera *)));
+
+    curandState *dRandState;
+    checkCudaErrors(cudaMalloc((void **)&dRandState, width*height*sizeof(curandState)));
+
+    World** dWorld;
+    checkCudaErrors(cudaMalloc((void **)&dWorld, sizeof(World *)));
+
+    create_world<<<1, 1>>>(dWorld, camera, width, height);
+    checkCudaErrors(cudaGetLastError());
+
+    dim3 blockSize(16, 16);
+    dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y);
+    renderInit<<<gridSize, blockSize>>>(width, height, dRandState);
+    checkCudaErrors(cudaGetLastError());
+
+    std::cout << "Starting main loop" << std::endl;
+
+    double lastxpos, lastypos;
+    glfwGetCursorPos(window, &lastxpos, &lastypos);
 
     // Main Loop
     while (!glfwWindowShouldClose(window)) {
+
+        Vec3 cameraDeltaPos(0,0,0);
+        Vec3 cameraDeltaRotation(0,0,0);
+        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
+            cameraDeltaPos[0] += 1;
+        }
+        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
+            cameraDeltaPos[0] -= 1;
+        }
+        if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
+            cameraDeltaPos[1] += 1;
+        }
+        if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
+            cameraDeltaPos[1] -= 1;
+        }
+        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
+            cameraDeltaPos[2] += 1;
+        }
+        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
+            cameraDeltaPos[2] -= 1;
+        }
+
+        double xpos, ypos;
+        glfwGetCursorPos(window, &xpos, &ypos);
+        float xoffset = xpos - lastxpos;
+        float yoffset = lastypos - ypos;
+        lastxpos = xpos;
+        lastypos = ypos;
+
+        controlCamera<<<1, 1>>>(camera, xoffset, yoffset, cameraDeltaPos);
+        
         // Map CUDA Resource
         cudaArray* textureArray;
-        checkCuda(cudaGraphicsMapResources(1, &cudaResource, 0), "Mapping CUDA resource");
-        checkCuda(cudaGraphicsSubResourceGetMappedArray(&textureArray, cudaResource, 0, 0), "Getting mapped array");
+        checkCudaErrors(cudaGraphicsMapResources(1, &cudaResource, 0));
+        checkCudaErrors(cudaGraphicsSubResourceGetMappedArray(&textureArray, cudaResource, 0, 0));
 
         // Generate Random Pixels
-        dim3 blockSize(16, 16);
-        dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y);
         unsigned int seed = static_cast<unsigned int>(frames);
-        generateRandomPixels<<<gridSize, blockSize>>>(devPixels, width, height, seed);
-        checkCuda(cudaMemcpyToArray(textureArray, 0, 0, devPixels, width * height * sizeof(uchar4), cudaMemcpyDeviceToDevice), "Copying pixels to texture");
+        // generateRandomPixels<<<gridSize, blockSize>>>(devPixels, width, height, seed, camera);
+        render<<<gridSize, blockSize>>>(devPixels, width, height, camera, dWorld, dRandState);
+        checkCudaErrors(cudaMemcpyToArray(textureArray, 0, 0, devPixels, width * height * sizeof(uchar4), cudaMemcpyDeviceToDevice));
 
-        checkCuda(cudaGraphicsUnmapResources(1, &cudaResource, 0), "Unmapping CUDA resource");
+        checkCudaErrors(cudaGraphicsUnmapResources(1, &cudaResource, 0));
 
         // Render
         glClear(GL_COLOR_BUFFER_BIT);
         screen_quad_shader.use();
         screenQuad.bind();
         screenQuadTexture.bind();
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+        glDrawElements(GL_TRIANGLES, screenQuad.getRenderInfo().indicesCount, GL_UNSIGNED_INT, 0);
 
         glfwSwapBuffers(window);
         glfwPollEvents();
@@ -141,7 +183,7 @@ int main() {
 
     // Cleanup
     cudaGraphicsUnregisterResource(cudaResource);
-    checkCuda(cudaFree(devPixels), "Freeing device memory");
+    checkCudaErrors(cudaFree(devPixels));
 
     glfwDestroyWindow(window);
     glfwTerminate();

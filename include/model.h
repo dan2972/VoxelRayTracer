@@ -15,7 +15,7 @@ public:
     Model() = default;
     ~Model();
 
-    void addData(const Mesh& mesh, const std::vector<int>& vbo_dimensions = {2,2});
+    void addData(const Mesh& mesh, const std::vector<int>& vboDimensions = {2,2});
     void deleteData();
 
     void genVAO();

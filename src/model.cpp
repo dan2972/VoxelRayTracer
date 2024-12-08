@@ -4,10 +4,10 @@ Model::~Model() {
     deleteData();
 }
 
-void Model::addData(const Mesh& mesh, const std::vector<int>& vbo_dimensions) {
+void Model::addData(const Mesh& mesh, const std::vector<int>& vboDimensions) {
     genVAO();
 
-    addVBO(vbo_dimensions, mesh.vertices);
+    addVBO(vboDimensions, mesh.vertices);
     addEBO(mesh.indices);
     glBindVertexArray(0);
 }
