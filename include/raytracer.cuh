@@ -106,14 +106,38 @@ __global__ void render(uchar4* pixels, int width, int height, Camera** cam, Worl
     Vec3 col(0, 0, 0);
     float u = float(x) / float(width);
     float v = float(y) / float(height);
-    Ray r = (*cam)->getRay(u, v);
-    col = color(world, r, &localRandState);
+
+    int ssp = 1;
+    for (int s = 0; s < ssp; ++s) {
+        u = float(x + curand_uniform(&localRandState)) / float(width);
+        v = float(y + curand_uniform(&localRandState)) / float(height);
+        Ray r = (*cam)->getRay(u, v);
+        col += color(world, r, &localRandState);
+    }
+    col /= ssp;
+
+    // Center crosshair
+    float cu = 0.5, cv = 0.5;
+    float crosshairWidth = 0.001;
+    float crosshairSize = 0.01f;
+    if ((abs(u-cu) * (*cam)->aspect < crosshairWidth || abs(v-cv) < crosshairWidth) 
+            && (abs(u-cu) * (*cam)->aspect + abs(v-cv) < crosshairSize)) {
+        col = Vec3(1, 1, 1) - col;
+    }
     
     randState[pixelIndex] = localRandState;
     col[0] = std::sqrt(col[0]);
     col[1] = std::sqrt(col[1]);
     col[2] = std::sqrt(col[2]);
     pixels[pixelIndex] = make_uchar4(255 * col.x(), 255 * col.y(), 255 * col.z(), 255);
+}
+
+__global__ void placeBlock(Camera** cam, World** world, float maxDistance) {
+    Ray centerRay = (*cam)->getRay(0.5, 0.5);
+    HitRecord hitRecord;
+    if ((*world)->rayIntersect(centerRay, 0.001f, maxDistance, hitRecord)) {
+        (*world)->insert(hitRecord.position + hitRecord.normal * 0.1f, {1, 1, 1});
+    }
 }
 
 class RayTracer {

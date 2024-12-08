@@ -93,12 +93,10 @@ int main() {
     int frames = 0;
     
     Camera** camera;
-    checkCudaErrors(cudaMalloc((void **)&camera, sizeof(Camera *)));
-
     curandState *dRandState;
-    checkCudaErrors(cudaMalloc((void **)&dRandState, width*height*sizeof(curandState)));
-
     World** dWorld;
+    checkCudaErrors(cudaMalloc((void **)&camera, sizeof(Camera *)));
+    checkCudaErrors(cudaMalloc((void **)&dRandState, width*height*sizeof(curandState)));
     checkCudaErrors(cudaMalloc((void **)&dWorld, sizeof(World *)));
 
     create_world<<<1, 1>>>(dWorld, camera, width, height);
@@ -113,6 +111,7 @@ int main() {
 
     double lastxpos, lastypos;
     glfwGetCursorPos(window, &lastxpos, &lastypos);
+    int prevMouseClickState = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT);
 
     // Main Loop
     while (!glfwWindowShouldClose(window)) {
@@ -145,16 +144,19 @@ int main() {
         lastxpos = xpos;
         lastypos = ypos;
 
+        int mouseClickState = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT);
+        if (mouseClickState == GLFW_PRESS && prevMouseClickState == GLFW_RELEASE) {
+            placeBlock<<<1, 1>>>(camera, dWorld, 20);
+        }
+        prevMouseClickState = mouseClickState;
+
         controlCamera<<<1, 1>>>(camera, xoffset, yoffset, cameraDeltaPos);
         
         // Map CUDA Resource
         cudaArray* textureArray;
         checkCudaErrors(cudaGraphicsMapResources(1, &cudaResource, 0));
         checkCudaErrors(cudaGraphicsSubResourceGetMappedArray(&textureArray, cudaResource, 0, 0));
-
-        // Generate Random Pixels
-        unsigned int seed = static_cast<unsigned int>(frames);
-        // generateRandomPixels<<<gridSize, blockSize>>>(devPixels, width, height, seed, camera);
+        
         render<<<gridSize, blockSize>>>(devPixels, width, height, camera, dWorld, dRandState);
         checkCudaErrors(cudaMemcpyToArray(textureArray, 0, 0, devPixels, width * height * sizeof(uchar4), cudaMemcpyDeviceToDevice));
 
