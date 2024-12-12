@@ -8,6 +8,7 @@
 #include "bbox.cuh"
 
 struct OctreeNode {
+    bool isAir = false;
     unsigned char r, g, b, childMask;
     BBox bounds;
     OctreeNode* children[8];
@@ -46,7 +47,7 @@ public:
         }
     }
 
-    __device__ void insert(Vec3 position, Vec3 rgb) {
+    __device__ void insert(Vec3 position, Vec3 rgb, bool isAir = false) {
         if (m_octree == nullptr) {
             m_octree = new OctreeNode{0, m_worldBounds};
         }
@@ -59,6 +60,7 @@ public:
                 node->r = rgb[0] * 255;
                 node->g = rgb[1] * 255;
                 node->b = rgb[2] * 255;
+                node->isAir = isAir;
                 return;
             }
 
@@ -102,7 +104,7 @@ public:
                     
                     float nearT, farT;
                     if (child->bounds.rayIntersects(ray, rayTMin, rayTMax, nearT, farT) && nearT < nearestT) {
-                        if (child->childMask == 0) {
+                        if (child->childMask == 0 && !child->isAir) {
                             hitRecord.t = nearT;
                             hitRecord.position = ray.at(nearT);
                             hitRecord.normal = child->bounds.getNormal(hitRecord.position);

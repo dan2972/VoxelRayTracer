@@ -13,13 +13,21 @@
 #include "bbox.cuh"
 #include "world.cuh"
 
+bool IN_FOCUS = true;
+bool SHOW_CROSSHAIR = true;
+
 void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
         // glfwSetWindowShouldClose(window, GLFW_TRUE);
-        if (glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_NORMAL)
+        if (glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_NORMAL) {
             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-        else
+            IN_FOCUS = true;
+        } else {
             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            IN_FOCUS = false;
+        }
+    } else if (key == GLFW_KEY_C && action == GLFW_PRESS) {
+        SHOW_CROSSHAIR = !SHOW_CROSSHAIR;
     }
 }
 
@@ -48,7 +56,7 @@ int main() {
 
     glfwSetKeyCallback(window, keyCallback);
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-    // glfwSwapInterval(0); // Disable VSync
+    glfwSwapInterval(0); // Disable VSync
 
     // Initialize Glad
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
@@ -74,7 +82,7 @@ int main() {
     screenQuad.addData({quadVertices, quadIndices}, {2, 2});
 
     // Compile Shaders and Link Program
-    Shader screen_quad_shader = ResourceManager::loadShader("res/shaders/basic_quad.vert", "res/shaders/basic_quad.frag", nullptr, "screen_quad");
+    Shader screenQuadShader = ResourceManager::loadShader("res/shaders/basic_quad.vert", "res/shaders/basic_quad.frag", nullptr, "screen_quad");
 
     Texture2D screenQuadTexture;
     screenQuadTexture.generate(width, height, nullptr);
@@ -91,6 +99,10 @@ int main() {
     // FPS Counter Variables
     auto lastTime = std::chrono::high_resolution_clock::now();
     int frames = 0;
+
+    // Delta Time Variables
+    float deltaTime = 0.0f;
+    auto lastFrameTime = std::chrono::high_resolution_clock::now();
     
     Camera** camera;
     curandState *dRandState;
@@ -111,60 +123,68 @@ int main() {
 
     double lastxpos, lastypos;
     glfwGetCursorPos(window, &lastxpos, &lastypos);
-    int prevMouseClickState = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT);
+    int prevMouseClickStateL = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT);
+    int prevMouseClickStateR = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT);
 
     // Main Loop
     while (!glfwWindowShouldClose(window)) {
+        // Process Input
+        if (IN_FOCUS) {
+            Vec3 cameraDeltaPos(0,0,0);
+            Vec3 cameraDeltaRotation(0,0,0);
+            if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
+                cameraDeltaPos[0] += 1;
+            }
+            if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
+                cameraDeltaPos[0] -= 1;
+            }
+            if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
+                cameraDeltaPos[1] += 1;
+            }
+            if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
+                cameraDeltaPos[1] -= 1;
+            }
+            if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
+                cameraDeltaPos[2] += 1;
+            }
+            if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
+                cameraDeltaPos[2] -= 1;
+            }
 
-        Vec3 cameraDeltaPos(0,0,0);
-        Vec3 cameraDeltaRotation(0,0,0);
-        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
-            cameraDeltaPos[0] += 1;
-        }
-        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
-            cameraDeltaPos[0] -= 1;
-        }
-        if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
-            cameraDeltaPos[1] += 1;
-        }
-        if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
-            cameraDeltaPos[1] -= 1;
-        }
-        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
-            cameraDeltaPos[2] += 1;
-        }
-        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
-            cameraDeltaPos[2] -= 1;
-        }
+            double xpos, ypos;
+            glfwGetCursorPos(window, &xpos, &ypos);
+            float xoffset = xpos - lastxpos;
+            float yoffset = lastypos - ypos;
+            lastxpos = xpos;
+            lastypos = ypos;
 
-        double xpos, ypos;
-        glfwGetCursorPos(window, &xpos, &ypos);
-        float xoffset = xpos - lastxpos;
-        float yoffset = lastypos - ypos;
-        lastxpos = xpos;
-        lastypos = ypos;
+            int mouseClickStateL = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT);
+            int mouseClickStateR = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT);
+            if (mouseClickStateR == GLFW_PRESS && prevMouseClickStateR == GLFW_RELEASE) {
+                placeBlock<<<1, 1>>>(camera, dWorld, 20);
+            }
+            if (mouseClickStateL == GLFW_PRESS && prevMouseClickStateL == GLFW_RELEASE) {
+                removeBlock<<<1, 1>>>(camera, dWorld, 20);
+            }
+            prevMouseClickStateR = mouseClickStateR;
+            prevMouseClickStateL = mouseClickStateL;
 
-        int mouseClickState = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT);
-        if (mouseClickState == GLFW_PRESS && prevMouseClickState == GLFW_RELEASE) {
-            placeBlock<<<1, 1>>>(camera, dWorld, 20);
+            controlCamera<<<1, 1>>>(camera, xoffset, yoffset, cameraDeltaPos, deltaTime);
         }
-        prevMouseClickState = mouseClickState;
-
-        controlCamera<<<1, 1>>>(camera, xoffset, yoffset, cameraDeltaPos);
         
         // Map CUDA Resource
         cudaArray* textureArray;
         checkCudaErrors(cudaGraphicsMapResources(1, &cudaResource, 0));
         checkCudaErrors(cudaGraphicsSubResourceGetMappedArray(&textureArray, cudaResource, 0, 0));
         
-        render<<<gridSize, blockSize>>>(devPixels, width, height, camera, dWorld, dRandState);
+        render<<<gridSize, blockSize>>>(devPixels, width, height, SHOW_CROSSHAIR, camera, dWorld, dRandState);
         checkCudaErrors(cudaMemcpyToArray(textureArray, 0, 0, devPixels, width * height * sizeof(uchar4), cudaMemcpyDeviceToDevice));
 
         checkCudaErrors(cudaGraphicsUnmapResources(1, &cudaResource, 0));
 
         // Render
         glClear(GL_COLOR_BUFFER_BIT);
-        screen_quad_shader.use();
+        screenQuadShader.use();
         screenQuad.bind();
         screenQuadTexture.bind();
         glDrawElements(GL_TRIANGLES, screenQuad.getRenderInfo().indicesCount, GL_UNSIGNED_INT, 0);
@@ -181,6 +201,11 @@ int main() {
             frames = 0;
             lastTime = currentTime;
         }
+
+        // Update Delta Time
+        auto currentFrameTime = std::chrono::high_resolution_clock::now();
+        deltaTime = std::chrono::duration<float, std::chrono::seconds::period>(currentFrameTime - lastFrameTime).count();
+        lastFrameTime = currentFrameTime;
     }
 
     // Cleanup

@@ -35,14 +35,14 @@ public:
     }
 
     // direction is a Vec3 where x, y, z are 1, 0, or -1
-    __device__ void processKeyboardMovement(Vec3 direction) {
-        Vec3 forward = unitVector(Vec3(front.x(), 0, front.z())) * movementSpeed;
+    __device__ void processKeyboardMovement(Vec3 direction, float deltaTime) {
+        Vec3 forward = unitVector(Vec3(front.x(), 0, front.z())) * movementSpeed * deltaTime;
         
         if (direction[0] != 0) {
-            origin += direction[0] * right * movementSpeed;
+            origin += direction[0] * right * movementSpeed * deltaTime;
         }
         if (direction[1] != 0) {
-            origin += direction[1] * worldUp * movementSpeed;
+            origin += direction[1] * worldUp * movementSpeed * deltaTime;
         }
         if (direction[2] != 0) {
             origin[0] += direction[2] * forward[0];
@@ -75,9 +75,9 @@ public:
     Vec3 right;
     Vec3 up;
     Vec3 worldUp;
-    float yaw=0, pitch=0;
+    float yaw=-45, pitch=-25;
     float vfov, aspect;
-    float movementSpeed = 0.1f;
+    float movementSpeed = 10.0f;
     float mouseSensitivity = 0.05f;
 };
 
