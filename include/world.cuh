@@ -9,6 +9,7 @@
 
 struct OctreeNode {
     bool isAir = false;
+    bool emissive = false;
     unsigned char r, g, b, childMask;
     BBox bounds;
     OctreeNode* children[8];
@@ -20,6 +21,7 @@ struct OctreeNode {
 };
 
 struct HitRecord {
+    bool emissive;
     float t;
     Vec3 position;
     Vec3 normal;
@@ -47,7 +49,7 @@ public:
         }
     }
 
-    __device__ void insert(Vec3 position, Vec3 rgb, bool isAir = false) {
+    __device__ void insert(Vec3 position, Vec3 rgb, bool isAir = false, bool emissive = false) {
         if (m_octree == nullptr) {
             m_octree = new OctreeNode{0, m_worldBounds};
         }
@@ -61,6 +63,7 @@ public:
                 node->g = rgb[1] * 255;
                 node->b = rgb[2] * 255;
                 node->isAir = isAir;
+                node->emissive = emissive;
                 return;
             }
 
@@ -109,6 +112,7 @@ public:
                             hitRecord.position = ray.at(nearT);
                             hitRecord.normal = child->bounds.getNormal(hitRecord.position);
                             hitRecord.color = Vec3(child->r / 255.0f, child->g / 255.0f, child->b / 255.0f);
+                            hitRecord.emissive = child->emissive;
                             nearestT = nearT;
                             hit = true;
                         } else {

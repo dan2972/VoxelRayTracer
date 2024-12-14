@@ -15,6 +15,8 @@
 
 bool IN_FOCUS = true;
 bool SHOW_CROSSHAIR = true;
+bool SKY_ENABLED = false;
+bool DENOISE_ENABLED = true;
 
 void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
@@ -28,12 +30,16 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
         }
     } else if (key == GLFW_KEY_C && action == GLFW_PRESS) {
         SHOW_CROSSHAIR = !SHOW_CROSSHAIR;
+    } else if (key == GLFW_KEY_B && action == GLFW_PRESS) {
+        SKY_ENABLED = !SKY_ENABLED;
+    } else if (key == GLFW_KEY_N && action == GLFW_PRESS) {
+        DENOISE_ENABLED = !DENOISE_ENABLED;
     }
 }
 
 int main() {
-    const int width = 1920;
-    const int height = 1080;
+    const int width = 1280;
+    const int height = 720;
 
     // Initialize GLFW
     if (!glfwInit()) {
@@ -45,7 +51,7 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow* window = glfwCreateWindow(width, height, "CUDA + OpenGL Example", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(width, height, "Ray Tracer", nullptr, nullptr);
     if (!window) {
         std::cerr << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
@@ -92,9 +98,20 @@ int main() {
     cudaGraphicsResource* cudaResource;
     checkCudaErrors(cudaGraphicsGLRegisterImage(&cudaResource, screenQuadTexture.ID, GL_TEXTURE_2D, cudaGraphicsRegisterFlagsWriteDiscard));
 
-    // Allocate CUDA memory once
+    // CUDA Memory Allocation
     uchar4* devPixels;
+    Vec3* colors;
+    Vec3* positions;
+    Vec3* normals;
+    Vec3* output;
     checkCudaErrors(cudaMalloc(&devPixels, width * height * sizeof(uchar4)));
+    checkCudaErrors(cudaMalloc(&colors, width * height * sizeof(Vec3)));
+    checkCudaErrors(cudaMalloc(&positions, width * height * sizeof(Vec3)));
+    checkCudaErrors(cudaMalloc(&normals, width * height * sizeof(Vec3)));
+    checkCudaErrors(cudaMalloc(&output, width * height * sizeof(Vec3)));
+    float cPhi = 64.0f;
+    float nPhi = 0.02f;
+    float pPhi = 0.30f;
 
     // FPS Counter Variables
     auto lastTime = std::chrono::high_resolution_clock::now();
@@ -151,6 +168,35 @@ int main() {
                 cameraDeltaPos[2] -= 1;
             }
 
+            bool printPhi = true;
+            if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS && glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) {
+                cPhi += deltaTime * 10;
+            }
+            else if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS && glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) {
+                cPhi -= deltaTime * 10;
+                cPhi = fmaxf(cPhi, 0.0f);
+            }
+            else if (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS && glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) {
+                nPhi += deltaTime * 0.5f;
+            }
+            else if (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS && glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) {
+                nPhi -= deltaTime * 0.5f;
+                nPhi = fmaxf(nPhi, 0.0f);
+            }
+            else if (glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS && glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) {
+                pPhi += deltaTime * 0.5;
+            }
+            else if (glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS && glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) {
+                pPhi -= deltaTime * 0.5;
+                pPhi = fmaxf(pPhi, 0.0f);
+            } else {
+                printPhi = false;
+            }
+            if (printPhi) {
+                std::cout << "cPhi: " << cPhi << " nPhi: " << nPhi << " pPhi: " << pPhi << std::endl;
+            }
+
+
             double xpos, ypos;
             glfwGetCursorPos(window, &xpos, &ypos);
             float xoffset = xpos - lastxpos;
@@ -161,7 +207,7 @@ int main() {
             int mouseClickStateL = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT);
             int mouseClickStateR = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT);
             if (mouseClickStateR == GLFW_PRESS && prevMouseClickStateR == GLFW_RELEASE) {
-                placeBlock<<<1, 1>>>(camera, dWorld, 20);
+                placeBlock<<<1, 1>>>(camera, dWorld, 20, glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS);
             }
             if (mouseClickStateL == GLFW_PRESS && prevMouseClickStateL == GLFW_RELEASE) {
                 removeBlock<<<1, 1>>>(camera, dWorld, 20);
@@ -177,7 +223,14 @@ int main() {
         checkCudaErrors(cudaGraphicsMapResources(1, &cudaResource, 0));
         checkCudaErrors(cudaGraphicsSubResourceGetMappedArray(&textureArray, cudaResource, 0, 0));
         
-        render<<<gridSize, blockSize>>>(devPixels, width, height, SHOW_CROSSHAIR, camera, dWorld, dRandState);
+        render<<<gridSize, blockSize>>>(colors, positions, normals, width, height, camera, dWorld, dRandState, SKY_ENABLED);
+        checkCudaErrors(cudaGetLastError());
+        if (DENOISE_ENABLED) {
+            denoiseImage(output, colors, positions, normals, cPhi, nPhi, pPhi, width, height, gridSize, blockSize);
+        } else output = colors;
+        finalizeRender<<<gridSize, blockSize>>>(devPixels, output, camera, width, height, SHOW_CROSSHAIR);
+        checkCudaErrors(cudaGetLastError());
+
         checkCudaErrors(cudaMemcpyToArray(textureArray, 0, 0, devPixels, width * height * sizeof(uchar4), cudaMemcpyDeviceToDevice));
 
         checkCudaErrors(cudaGraphicsUnmapResources(1, &cudaResource, 0));

@@ -75,7 +75,7 @@ public:
     Vec3 right;
     Vec3 up;
     Vec3 worldUp;
-    float yaw=-45, pitch=-25;
+    float yaw=-90, pitch=0;
     float vfov, aspect;
     float movementSpeed = 10.0f;
     float mouseSensitivity = 0.05f;
