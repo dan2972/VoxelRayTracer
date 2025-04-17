@@ -17,6 +17,7 @@ bool IN_FOCUS = true;
 bool SHOW_CROSSHAIR = true;
 bool SKY_ENABLED = false;
 bool DENOISE_ENABLED = true;
+bool ACCUMULATE_ENABLED = false;
 
 void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
@@ -34,6 +35,8 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
         SKY_ENABLED = !SKY_ENABLED;
     } else if (key == GLFW_KEY_N && action == GLFW_PRESS) {
         DENOISE_ENABLED = !DENOISE_ENABLED;
+    } else if (key == GLFW_KEY_V && action == GLFW_PRESS) {
+        ACCUMULATE_ENABLED = !ACCUMULATE_ENABLED;
     }
 }
 
@@ -100,11 +103,13 @@ int main() {
 
     // CUDA Memory Allocation
     uchar4* devPixels;
+    Vec3* accumColors;
     Vec3* colors;
     Vec3* positions;
     Vec3* normals;
     Vec3* output;
     checkCudaErrors(cudaMalloc(&devPixels, width * height * sizeof(uchar4)));
+    checkCudaErrors(cudaMalloc(&accumColors, width * height * sizeof(Vec3)));
     checkCudaErrors(cudaMalloc(&colors, width * height * sizeof(Vec3)));
     checkCudaErrors(cudaMalloc(&positions, width * height * sizeof(Vec3)));
     checkCudaErrors(cudaMalloc(&normals, width * height * sizeof(Vec3)));
@@ -142,6 +147,9 @@ int main() {
     glfwGetCursorPos(window, &lastxpos, &lastypos);
     int prevMouseClickStateL = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT);
     int prevMouseClickStateR = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT);
+
+    int accumFrames = 0;
+    bool accumulate = false;
 
     // Main Loop
     while (!glfwWindowShouldClose(window)) {
@@ -203,6 +211,11 @@ int main() {
             float yoffset = lastypos - ypos;
             lastxpos = xpos;
             lastypos = ypos;
+            if (xoffset != 0 || yoffset != 0 || cameraDeltaPos != Vec3(0,0,0)) {
+                accumulate = false;
+            } else {
+                accumulate = true;
+            }
 
             int mouseClickStateL = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT);
             int mouseClickStateR = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT);
@@ -217,13 +230,19 @@ int main() {
 
             controlCamera<<<1, 1>>>(camera, xoffset, yoffset, cameraDeltaPos, deltaTime);
         }
+
+        if (accumulate && ACCUMULATE_ENABLED) {
+            accumFrames++;
+        } else {
+            accumFrames = 0;
+        }
         
         // Map CUDA Resource
         cudaArray* textureArray;
         checkCudaErrors(cudaGraphicsMapResources(1, &cudaResource, 0));
         checkCudaErrors(cudaGraphicsSubResourceGetMappedArray(&textureArray, cudaResource, 0, 0));
         
-        render<<<gridSize, blockSize>>>(colors, positions, normals, width, height, camera, dWorld, dRandState, SKY_ENABLED);
+        render<<<gridSize, blockSize>>>(colors, accumColors, positions, normals, width, height, camera, dWorld, dRandState, accumFrames, SKY_ENABLED, accumulate && ACCUMULATE_ENABLED);
         checkCudaErrors(cudaGetLastError());
         if (DENOISE_ENABLED) {
             denoiseImage(output, colors, positions, normals, cPhi, nPhi, pPhi, width, height, gridSize, blockSize);

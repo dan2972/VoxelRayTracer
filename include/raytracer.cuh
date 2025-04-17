@@ -82,6 +82,18 @@ __device__ Vec3 random_in_unit_sphere(curandState *randState) {
     return p;
 }
 
+__device__ Vec3 random_in_hemisphere(curandState *randState, const Vec3& normal) {
+    Vec3 inUnitSphere = random_in_unit_sphere(randState);
+    if (dot(inUnitSphere, normal) < 0.0f) {
+        inUnitSphere = -inUnitSphere;
+    }
+    return inUnitSphere;
+}
+
+__device__ Vec3 reflect(const Vec3& v, const Vec3& n) {
+    return v - 2 * dot(v, n) * n;
+}
+
 __global__ void create_world(World** world, Camera** cam, int width, int height) {
     BBox worldBounds(Vec3(-32, -32, -32), Vec3(32, 32, 32));
     *world = new World(worldBounds, 7);
@@ -152,11 +164,15 @@ __device__ void rayTrace(World** world, const Ray& ray, curandState *randState, 
     Vec3 curAttenuation(1, 1, 1);
     position = curRay.at(100000.0f);
     normal = -unitVector(curRay.direction);
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 8; ++i) {
         HitRecord hitRecord;
         if ((*world)->rayIntersect(curRay, 0.001f, FLT_MAX, hitRecord)) {
             Ray scattered;
-            Vec3 target = hitRecord.position + hitRecord.normal + random_in_unit_sphere(randState);
+            Vec3 target;
+            if (hitRecord.color.x() == 1 && hitRecord.color.y() == 1 && hitRecord.color.z() == 1)
+                target = hitRecord.position + hitRecord.normal + random_in_hemisphere(randState, hitRecord.normal);
+            else
+                target = hitRecord.position + reflect(curRay.direction, hitRecord.normal);// + random_in_hemisphere(randState, hitRecord.normal) * 0.1f;
             scattered = Ray(hitRecord.position, target - hitRecord.position);
             curAttenuation *= hitRecord.color;
             curRay = scattered;
@@ -165,7 +181,7 @@ __device__ void rayTrace(World** world, const Ray& ray, curandState *randState, 
                 normal = unitVector(hitRecord.normal);
             }
             if (hitRecord.emissive) {
-                color = curAttenuation;
+                color = curAttenuation * 0.9f;
                 return;
             }
         } else {
@@ -185,8 +201,8 @@ __device__ void rayTrace(World** world, const Ray& ray, curandState *randState, 
 }
 
 __global__ void render(
-    Vec3* colors, Vec3* positions, Vec3* normals, int width, int height, 
-    Camera** cam, World** world, curandState* randState, bool enableSky = false) 
+    Vec3* colors, Vec3* accum, Vec3* positions, Vec3* normals, int width, int height, 
+    Camera** cam, World** world, curandState* randState, int accumFrames, bool enableSky = false, bool accumulate = false) 
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -211,7 +227,17 @@ __global__ void render(
         col += color;
     }
     col /= ssp;
-    colors[pixelIndex] = col;
+    if (accumulate) {
+        if (accumFrames == 1) {
+            accum[pixelIndex] = Vec3(0, 0, 0);
+            colors[pixelIndex] = col;
+        } else {
+            colors[pixelIndex] = (accum[pixelIndex] + col) / (float)accumFrames;
+        }
+        accum[pixelIndex] += col;
+    } else {
+        colors[pixelIndex] = col;
+    }
     positions[pixelIndex] = position;
     normals[pixelIndex] = normal;
     
